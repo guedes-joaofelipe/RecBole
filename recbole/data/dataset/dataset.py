@@ -104,14 +104,14 @@ class Dataset(object):
         self.logger.debug(set_color(f'Loading {self.__class__} from scratch.', 'green'))
 
         self._get_preset()
-        self._get_field_from_config()
+        self._get_field_from_config()      
         self._load_data(self.dataset_name, self.dataset_path)
         self._data_processing()
 
     def _get_preset(self):
         """Initialization useful inside attributes.
         """
-        self.dataset_path = self.config['data_path']
+        self.dataset_path = self.config['data_path']        
 
         self.field2type = {}
         self.field2source = {}
@@ -148,7 +148,7 @@ class Dataset(object):
         """
         self.feat_name_list = self._build_feat_name_list()
         if self.benchmark_filename_list is None:
-            self._data_filtering()
+            self._data_filtering()            
 
         self._remap_ID_all()
         self._user_item_feat_preparation()
@@ -175,7 +175,8 @@ class Dataset(object):
         self._filter_by_field_value()
         self._filter_inter_by_user_or_item()
         self._filter_by_inter_num()
-        self._reset_index()
+        self._filter_by_sparsity()        
+        self._reset_index()        
 
     def _build_feat_name_list(self):
         """Feat list building.
@@ -226,12 +227,12 @@ class Dataset(object):
             token (str): dataset name.
             dataset_path (str): path of dataset dir.
         """
-        if self.benchmark_filename_list is None:
+        if self.benchmark_filename_list is None:      
             inter_feat_path = os.path.join(dataset_path, f'{token}.inter')
             if not os.path.isfile(inter_feat_path):
                 raise ValueError(f'File {inter_feat_path} not exist.')
 
-            inter_feat = self._load_feat(inter_feat_path, FeatureSource.INTERACTION)
+            inter_feat = self._load_feat(inter_feat_path, FeatureSource.INTERACTION)                   
             self.logger.debug(f'Interaction feature loaded successfully from [{inter_feat_path}].')
             self.inter_feat = inter_feat
         else:
@@ -358,18 +359,18 @@ class Dataset(object):
         """
         self.logger.debug(set_color(f'Loading feature from [{filepath}] (source: [{source}]).', 'green'))
 
-        load_col, unload_col = self._get_load_and_unload_col(source)
+        load_col, unload_col = self._get_load_and_unload_col(source)        
         if load_col == set():
             return None
 
         field_separator = self.config['field_separator']
         columns = []
         usecols = []
-        dtype = {}
+        dtype = {}        
         with open(filepath, 'r') as f:
             head = f.readline()[:-1]
         for field_type in head.split(field_separator):
-            field, ftype = field_type.split(':')
+            field, ftype = field_type.split(':')            
             try:
                 ftype = FeatureType(ftype)
             except ValueError:
@@ -386,7 +387,7 @@ class Dataset(object):
             columns.append(field)
             usecols.append(field_type)
             dtype[field_type] = np.float64 if ftype == FeatureType.FLOAT else str
-
+        
         if len(columns) == 0:
             self.logger.warning(f'No columns has been loaded from [{source}]')
             return None
@@ -698,6 +699,71 @@ class Dataset(object):
                 if inter_num[id_] < min_num:
                     ids.add(id_)
         self.logger.debug(f'[{len(ids)}] illegal_ids_by_inter_num, field=[{field}]')
+        return ids
+
+    def _filter_by_sparsity(self):
+
+        if self.config['max_uss'] is None and self.config['max_iss'] is None:
+            if self.config['max_uss_quantile'] is None and self.config['max_iss_quantile'] is None:
+                return
+            
+            if self.config['max_uss_quantile'] is not None:
+                self.config['max_uss'] = np.quantile(a=self.inter_feat['uss'], q=self.config['max_uss_quantile'])
+            
+            if self.config['max_iss_quantile'] is not None:
+                self.config['max_iss'] = np.quantile(a=self.inter_feat['iss'], q=self.config['max_iss_quantile'])
+                    
+        ban_users = set() if self.config['max_uss'] is None else self._get_illegal_ids_by_sparsity(
+            entity='user', sparsity_threshold=self.config['max_uss']
+        )
+        
+        ban_items = set() if self.config['max_iss'] is None else self._get_illegal_ids_by_sparsity(
+            entity='item', sparsity_threshold=self.config['max_iss']
+        )
+ 
+        # if len(ban_users) == 0 and len(ban_items) == 0:
+        #     break
+
+        if self.user_feat is not None:
+            dropped_user = self.user_feat[self.uid_field].isin(ban_users)
+            self.user_feat.drop(self.user_feat.index[dropped_user], inplace=True)
+
+        if self.item_feat is not None:
+            dropped_item = self.item_feat[self.iid_field].isin(ban_items)
+            self.item_feat.drop(self.item_feat.index[dropped_item], inplace=True)
+
+        dropped_inter = pd.Series(False, index=self.inter_feat.index)
+        user_inter = self.inter_feat[self.uid_field]
+        item_inter = self.inter_feat[self.iid_field]
+        dropped_inter |= user_inter.isin(ban_users)
+        dropped_inter |= item_inter.isin(ban_items)
+
+        dropped_index = self.inter_feat.index[dropped_inter]
+        self.logger.debug(f'[{len(dropped_index)}] dropped interactions.')
+        self.inter_feat.drop(dropped_index, inplace=True)
+
+    def _get_illegal_ids_by_sparsity(self, entity, sparsity_threshold):
+        """ Given entity and sparsity threshold, return illegal ids whose sparsity >= threshold
+
+        Args:
+            entity (str): entity to filter. Options: item, user.
+            sparsity_threshold (float): maximum sparsity allowed.
+
+        Returns:
+            set: illegal ids, whose sparsity >= threshold
+        """
+
+        self.logger.debug(
+            set_color('_get_illegal_ids_by_sparsity', 'blue') +
+            f': entity=[{entity}], sparsity_threshold=[{sparsity_threshold}]]'
+        )
+
+        sparsity_column = 'iss' if entity == 'item' else 'uss'
+        field = self.iid_field if entity == 'item' else self.uid_field
+        ids = set(self.inter_feat[self.inter_feat[sparsity_column] > sparsity_threshold][field])
+
+        self.logger.debug(f'[{len(ids)}] illegal_ids_by_sparsity_threshold, entity=[{entity}]')
+
         return ids
 
     def _filter_by_field_value(self):

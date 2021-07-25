@@ -71,7 +71,7 @@ class Config(object):
         self.file_config_dict = self._load_config_files(config_file_list)
         self.variable_config_dict = self._load_variable_config_dict(config_dict)
         self.cmd_config_dict = self._load_cmd_line()
-        self._merge_external_config_dict()
+        self._merge_external_config_dict()        
 
         self.model, self.model_class, self.dataset = self._get_model_and_dataset(model, dataset)
         self._load_internal_config_dict(self.model, self.model_class, self.dataset)
@@ -131,7 +131,7 @@ class Config(object):
     def _load_config_files(self, file_list):
         file_config_dict = dict()
         if file_list:
-            for file in file_list:
+            for file in file_list:                
                 with open(file, 'r', encoding='utf-8') as f:
                     file_config_dict.update(yaml.load(f.read(), Loader=self.yaml_loader))
         return file_config_dict
@@ -258,7 +258,7 @@ class Config(object):
 
     def _get_final_config_dict(self):
         final_config_dict = dict()
-        final_config_dict.update(self.internal_config_dict)
+        final_config_dict.update(self.internal_config_dict)        
         final_config_dict.update(self.external_config_dict)
         return final_config_dict
 
@@ -266,7 +266,7 @@ class Config(object):
 
         self.final_config_dict['dataset'] = self.dataset
         self.final_config_dict['model'] = self.model
-        if self.dataset == 'ml-100k':
+        if self.dataset == 'ml-100k' and self.final_config_dict['data_path'] is None:
             current_path = os.path.dirname(os.path.realpath(__file__))
             self.final_config_dict['data_path'] = os.path.join(current_path, '../dataset_example/' + self.dataset)
         else:
